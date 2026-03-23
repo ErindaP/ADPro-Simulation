@@ -1,0 +1,132 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.2cm}
+
+\title{ADPro pour politiques de diffusion robotiques\\\large Explication des étapes et implémentation dans le code}
+\author{Projet SIMUL -- Franka Panda}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Objectif}
+ADPro (\emph{Adaptive Diffusion Policy}) est une adaptation \emph{test-time} d'une politique de diffusion pré-entraînée.
+L'idée est de ne pas réentraîner le modèle, mais de guider le débruitage avec de la géométrie de tâche.
+
+Dans ce projet, ADPro est implémenté dans \texttt{models/adpro.py} sous la classe \texttt{ADPro}, avec deux variantes:
+\begin{itemize}
+\item \texttt{implementation='paper'}: version la plus fidèle au papier (FGR + guidance Chamfer + contrainte sphérique).
+\item \texttt{implementation='practical'}: version plus robuste/pragmatique en simulation (target explicite + blend optionnel).
+\end{itemize}
+
+\section{Notation}
+\begin{itemize}
+\item Observation: $O = (O^0, O^1)$ avec $O^0$ nuage de points pince et $O^1$ nuage de points scène.
+\item Action 7D: $a=[x,y,z,q_x,q_y,q_z,q_w]$.
+\item Étape de diffusion: $t$ (du bruit fort vers faible).
+\item Politique de base: réseau $\epsilon_\theta(O,a_t,t)$.
+\end{itemize}
+
+\section{Étape 1 -- Initialisation consciente de la tâche}
+\subsection{Principe théorique}
+Au lieu de partir d'un bruit gaussien pur $a_T\sim\mathcal N(0,I)$, ADPro calcule une pose initiale structurée $a_0^{\text{est}}$ via la géométrie de scène,
+puis la projette au niveau de bruit $t=M$:
+\begin{equation}
+ a_M = \sqrt{\bar\alpha_M}\,a_0^{\text{est}} + \sqrt{1-\bar\alpha_M}\,\epsilon,\quad \epsilon\sim\mathcal N(0,I).
+\end{equation}
+
+\subsection{Implémentation}
+Fonction: \texttt{\_task\_aware\_init(obs, t\_start)}.
+\begin{itemize}
+\item Sous-échantillonnage des points: \texttt{subsample\_pointcloud}.
+\item Filtrage des points objet (pour réduire l'effet table): masque en $z$.
+\item Variante \texttt{paper}: estimation rigide complète par \texttt{fast\_global\_registration} puis conversion via \texttt{se3\_to\_action}.
+\item Variante \texttt{practical}: cible explicite de grasp (via \texttt{\_target\_grasp\_action}) + correction par centroïdes.
+\end{itemize}
+
+\section{Étape 2 -- Un pas de débruitage diffusion}
+\subsection{Principe}
+On exécute d'abord le pas DDPM standard pour obtenir $\tilde a_{t-1}$.
+
+\subsection{Implémentation}
+Dans \texttt{\_adpro\_step}:
+\begin{itemize}
+\item Prédiction du bruit: \texttt{eps\_pred = policy.network.forward(obs, a\_t, t)}.
+\item Pas DDPM: \texttt{a\_tilde = policy.ddpm\_step(...)}.
+\item Option déterministe: \texttt{deterministic\_denoising=True} coupe le bruit de reverse-process pour plus de stabilité.
+\end{itemize}
+
+\section{Étape 3 -- Estimation de l'action propre (formule type Tweedie)}
+\begin{equation}
+\hat a_0 = \frac{a_t - \sqrt{1-\bar\alpha_t}\,\epsilon_\theta(O,a_t,t)}{\sqrt{\bar\alpha_t}}.
+\end{equation}
+Implémentation: \texttt{\_predict\_clean\_action}.
+
+\section{Étape 4 -- Guidance sur manifold de tâche}
+\subsection{Version papier (surface-à-surface)}
+On construit la perte géométrique sur nuages de points (Chamfer):
+\begin{equation}
+\mathcal L = d_{\text{Chamfer}}\big(T(\hat a_0)\,O^0,\;O^1\big).
+\end{equation}
+Puis on corrige l'action intermédiaire dans la direction opposée au gradient.
+
+Implémentation dans \texttt{\_apply\_task\_manifold\_guidance}:
+\begin{itemize}
+\item Conversion action $\to$ pose: \texttt{action\_to\_se3}.
+\item Remise en repère local pince puis application de $T(\hat a_0)$ (cohérence des repères).
+\item Gradient Chamfer: \texttt{chamfer\_distance\_grad}.
+\end{itemize}
+
+\subsection{Version pratique (point-à-point)}
+La guidance pousse vers une \texttt{target\_grasp\_action} explicite (position + quaternion cible) via une erreur L2 simplifiée.
+
+\section{Étape 5 -- Contrainte sphérique (Eq. 9)}
+La correction est normalisée puis mise à l'échelle par le bruit courant:
+\begin{equation}
+ a_{t-1} = \tilde a_{t-1} - s\,\sqrt{d}\,\sigma_t\,\frac{\nabla_a\mathcal L}{\|\nabla_a\mathcal L\|},
+\end{equation}
+où $d$ est la dimension d'action et $s$ est un facteur de stabilisation (dans le code: \texttt{spherical\_scale}).
+
+Implémentation:
+\begin{itemize}
+\item \texttt{use\_spherical=True}: active la formule normalisée.
+\item \texttt{spherical\_scale}: contrôle l'intensité du pas.
+\end{itemize}
+
+\section{Étape 6 -- Boucle complète d'inférence}
+Dans \texttt{inference(...)}:
+\begin{enumerate}
+\item Choix de l'initialisation: task-aware (si \texttt{use\_fgr}) ou gaussienne.
+\item Boucle décroissante en $t$ de \texttt{t\_start} vers $0$.
+\item À chaque itération: DDPM $\to$ estimation $\hat a_0$ $\to$ guidance manifold $\to$ contrainte sphérique.
+\item Sortie finale: action $a_0$ appliquée à l'environnement.
+\end{enumerate}
+
+\section{Paramètres importants et rôle}
+\begin{itemize}
+\item \texttt{implementation}: \texttt{paper} vs \texttt{practical}.
+\item \texttt{M}: niveau de bruit initial (plus petit = init plus proche de l'action finale).
+\item \texttt{spherical\_scale}: stabilité vs agressivité de la guidance.
+\item \texttt{deterministic\_denoising}: stabilité temporelle en simulation.
+\item \texttt{use\_blend} (practical): stabilisation additionnelle vers la cible explicite.
+\end{itemize}
+
+\section{Lien avec la visualisation}
+Dans \texttt{simulate\_realtime.py}, l'option \texttt{--show-denoise} permet de visualiser:
+\begin{itemize}
+\item la trajectoire interne $a_t\to a_0$ (baseline vs ADPro),
+\item l'initialisation ADPro,
+\item les métriques de guidance (norme gradient, norme de pas, blend).
+\end{itemize}
+
+\section{Résumé}
+ADPro améliore une politique de diffusion en injectant de la structure géométrique au test-time:
+initialisation orientée tâche, guidance manifold, et normalisation sphérique des mises à jour.
+La variante \texttt{paper} maximise la fidélité théorique; la variante \texttt{practical} maximise la robustesse en simulation.
+
+\end{document}
