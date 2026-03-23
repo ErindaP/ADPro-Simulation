@@ -50,3 +50,17 @@ MPLCONFIGDIR=/tmp/matplotlib-cache /root/ENS/M2/ROBOT/.venv/bin/python demo.py -
 ```
 
 Les figures sont écrites dans `results/`.
+
+## 4) Couche Robot Réel (Franka)
+
+La couche de déploiement est séparée dans `real_robot/`.
+
+Dry-run local (sans robot):
+
+```bash
+/root/ENS/M2/ROBOT/.venv/bin/python real_robot/scripts/run_policy.py --backend mock --config real_robot/config/lab_franka.json --dry-run --run-seconds 5
+```
+
+Guide complet:
+
+- `real_robot/README_REAL_ROBOT.md`

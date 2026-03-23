@@ -1,0 +1,28 @@
+policy:
+  checkpoint_path: checkpoints/baseline_policy.npz
+  seed: 42
+  adpro_impl: paper
+  adpro_steps: 20
+  adpro_M: 60
+  adpro_spherical_scale: 0.20
+  adpro_stochastic: false
+
+loop:
+  policy_hz: 5.0
+  run_seconds: -1.0
+
+safety:
+  # A calibrer selon ton espace de travail labo
+  workspace_min: [0.30, -0.35, 0.08]
+  workspace_max: [0.75, 0.35, 0.60]
+  max_translation_step_m: 0.03
+  max_rotation_step_rad: 0.25
+  lowpass_alpha: 0.35
+
+ros2_topics:
+  # Topics à adapter à ton stack labo (franka_ros2 / bridge custom)
+  pc_gripper_topic: /adpro/pc_gripper
+  pc_scene_topic: /adpro/pc_scene
+  ee_pose_topic: /franka_state_controller/ee_pose
+  target_pose_topic: /adpro/target_pose
+  gripper_width_topic: /adpro/target_gripper_width

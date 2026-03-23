@@ -1,0 +1,6 @@
+PyYAML>=6.0
+# For ROS2 backend on lab machine:
+# rclpy
+# sensor_msgs_py
+# geometry_msgs
+# std_msgs
