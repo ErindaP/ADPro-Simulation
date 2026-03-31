@@ -1,0 +1,53 @@
+docker start ros_noetic_handeye
+
+Tous les terminaux:
+docker exec -it ros_noetic_handeye bash
+
+T1: ROBOT
+roslaunch franka_control franka_control.launch robot_ip:=192.168.10.100 load_gripper:=true
+
+
+T2: CAMERA
+rosrun usb_cam usb_cam_node     _video_device:=/dev/video0     _pixel_format:=yuyv     _image_width:=2560     _image_height:=720     _camera_name:=head_camera     _camera_info_url:=file:///root/.ros/camera_info/head_camera.yaml     _io_method:=mmap
+
+
+T3: ARUCO
+rosrun aruco_ros single   _markerId:=582   _markerSize:=0.15   _dictionary:=7   _image_is_rectified:=true   _camera_frame:="head_camera"   _ref_frame:="head_camera"   _marker_frame:="camera_marker"   image:=/left_cam/image_rect   camera_info:=/left_cam/camera_info
+
+
+T4: CHECK ARUCO
+rosrun rqt_image_view rqt_image_view
+
+------------------------------------------------------------------------------
+Check if aruco/result shows borders and axes of the aruco code
+------------------------------------------------------------------------------
+
+T5: MOVE ROBOT
+roslaunch panda_moveit_config move_group.launch load_gripper:=true
+
+
+T6: CAMERA CROP
+rosrun nodelet nodelet standalone image_proc/crop_decimate   _x_offset:=0 _y_offset:=0 _width:=1280 _height:=720   camera/image_raw:=/usb_cam/image_raw   camera/camera_info:=/usb_cam/camera_info   camera_out/image_raw:=/left_cam/image_raw   camera_out/camera_info:=/left_cam/camera_info   _camera_info_url:=file:///root/.ros/camera_info/head_camera.yaml
+
+T7: CAMERA DISTORTION
+ROS_NAMESPACE=left_cam rosrun image_proc image_proc
+
+
+-------------------------------------------------------------
+	2 OPTIONS TO POSITION THE ARUCO AT RVIZ:
+-------------------------------------------------------------
+
+
+-------------CALIBRATE (ACCURATE BUT I COULDN`T DO IT YET)-------------
+T8: 
+roslaunch easy_handeye calibrate.launch     eye_on_hand:=false     namespace_prefix:=panda_eye_to_hand     robot_base_frame:=panda_link0     robot_effector_frame:=panda_link8     tracking_base_frame:=head_camera     tracking_marker_frame:=camera_marker     move_group:="panda_arm"
+
+T9:
+roslaunch easy_handeye publish.launch     eye_on_hand:=false     namespace_prefix:=panda_eye_to_hand
+
+
+
+------CAMERA REAL WORLD POSITION ESTIMATION (MEASURING WITH RULLER)------
+T10:
+rosrun tf static_transform_publisher 0.45 -0.9 0.45 0 0 -1.57 panda_link0 head_camera 100
+
