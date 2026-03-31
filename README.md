@@ -8,7 +8,7 @@ Use the project virtual environment:
 ```
 
 ## 1) Real-time Demo (3D window)
-From the `SIMUL` folder:
+From the `ADPro_Simulation` folder:
 
 ```bash
 MPLCONFIGDIR=/tmp/matplotlib-cache /root/ENS/M2/ROBOT/.venv/bin/python simulate_realtime.py --no-train

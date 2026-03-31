@@ -8,7 +8,7 @@
 \geometry{margin=2.2cm}
 
 \title{ADPro for Robotic Diffusion Policies\\\large Algorithm Steps and Code-Level Implementation}
-\author{SIMUL Project -- Franka Panda}
+\author{ADPro_Simulation Project -- Franka Panda}
 \date{\today}
 
 \begin{document}
@@ -115,6 +115,34 @@ In \texttt{inference(...)}:
 \item \texttt{deterministic\_denoising}: temporal stability in simulation and robot loops.
 \item \texttt{use\_blend} (practical): additional stabilization toward explicit target.
 \end{itemize}
+
+\section{Point Clouds in This Codebase}
+\subsection{Simulation Pipeline}
+In simulation, point clouds are generated synthetically inside \texttt{env/panda\_env.py} through \texttt{\_get\_obs()}:
+\begin{itemize}
+\item \texttt{pc\_gripper} is built with \texttt{sample\_gripper\_pointcloud(T\_ee, gripper\_width,...)} from \texttt{utils/point\_cloud.py}, using a geometric model of the Panda hand (palm + two fingers) transformed to world coordinates.
+\item \texttt{pc\_scene} is built with \texttt{sample\_scene\_pointcloud(obj\_pos,...)} from \texttt{utils/point\_cloud.py}, as a concatenation of object points + table points.
+\item Both point clouds are random-sampled each step with the environment RNG, which provides variability while keeping reproducibility with a fixed seed.
+\end{itemize}
+
+\subsection{How ADPro Uses Them}
+ADPro consumes these clouds from the observation dictionary (\texttt{obs['pc\_gripper']}, \texttt{obs['pc\_scene']}):
+\begin{itemize}
+\item \texttt{\_task\_aware\_init}: subsamples both clouds (\texttt{subsample\_pointcloud}) and estimates a structured initialization.
+\item \texttt{paper} mode: computes rigid alignment (FGR) and Chamfer-based geometric guidance from point-cloud correspondences.
+\item \texttt{practical} mode: uses cloud-derived object center + explicit grasp target for a more stable heuristic guidance.
+\end{itemize}
+
+\subsection{Real-Robot Layer: Retrieved vs Reconstructed Clouds}
+In \texttt{real\_robot/}, point-cloud handling depends on the backend:
+\begin{itemize}
+\item \textbf{ROS2 backend} (\texttt{adapters/ros2\_franka\_adapter.py}): \texttt{pc\_gripper} and \texttt{pc\_scene} are \emph{retrieved} from ROS2 \texttt{PointCloud2} topics and converted with \texttt{\_pc2\_to\_xyz}.
+\item \textbf{GELLO backend} (\texttt{adapters/gello\_zmq\_adapter.py}): robot joint states are retrieved from ZMQ, then \texttt{T\_ee} is computed via FK, and point clouds are \emph{reconstructed/simulated} with \texttt{sample\_gripper\_pointcloud} and \texttt{sample\_scene\_pointcloud}.
+\item \textbf{Mock backend} (\texttt{adapters/mock\_adapter.py}): observations come directly from \texttt{PandaPickPlaceEnv}, so clouds follow the same synthetic generation path as simulation.
+\end{itemize}
+
+\subsection{Practical Consequence}
+The policy interface remains identical (\texttt{pc\_gripper}, \texttt{pc\_scene}, \texttt{T\_ee}, etc.), which allows ADPro inference to run unchanged across simulation and deployment backends.
 
 \section{Visualization and Evaluation in This Repository}
 \subsection{Simulation and Offline Evaluation}

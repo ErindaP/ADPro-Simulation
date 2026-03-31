@@ -16,7 +16,7 @@ This folder is a layer separated from simulation to run ADPro on a real robot.
 ## Local Run (without robot)
 
 ```bash
-cd /root/ENS/M2/ROBOT/SIMUL
+cd /root/ENS/M2/ROBOT/ADPro_Simulation
 /root/ENS/M2/ROBOT/.venv/bin/python real_robot/scripts/run_policy.py \
   --backend mock \
   --config real_robot/config/lab_franka.json \
