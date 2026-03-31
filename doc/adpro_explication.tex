@@ -1,0 +1,155 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.2cm}
+
+\title{ADPro for Robotic Diffusion Policies\\\large Algorithm Steps and Code-Level Implementation}
+\author{SIMUL Project -- Franka Panda}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Objective}
+ADPro (\emph{Adaptive Diffusion Policy}) is a \emph{test-time} adaptation method for a pre-trained diffusion policy.
+The main idea is to avoid re-training and instead guide denoising using task geometry.
+
+In this project, ADPro is implemented in \texttt{models/adpro.py} through the \texttt{ADPro} class, with two variants:
+\begin{itemize}
+\item \texttt{implementation='paper'}: most faithful version to the paper (FGR + Chamfer guidance + spherical constraint).
+\item \texttt{implementation='practical'}: more robust/pragmatic simulation version (explicit target + optional blend).
+\end{itemize}
+
+\section{Notation}
+\begin{itemize}
+\item Observation: $O = (O^0, O^1)$ where $O^0$ is the gripper point cloud and $O^1$ is the scene point cloud.
+\item 7D action: $a=[x,y,z,q_x,q_y,q_z,q_w]$.
+\item Diffusion step: $t$ (from high noise to low noise).
+\item Base policy: network $\epsilon_\theta(O,a_t,t)$.
+\end{itemize}
+
+\section{Step 1 -- Task-Aware Initialization}
+\subsection{Theory}
+Instead of starting from pure Gaussian noise $a_T\sim\mathcal N(0,I)$, ADPro computes a structured initial pose $a_0^{\text{est}}$ from scene geometry,
+then projects it to noise level $t=M$:
+\begin{equation}
+ a_M = \sqrt{\bar\alpha_M}\,a_0^{\text{est}} + \sqrt{1-\bar\alpha_M}\,\epsilon,\quad \epsilon\sim\mathcal N(0,I).
+\end{equation}
+
+\subsection{Implementation}
+Function: \texttt{\_task\_aware\_init(obs, t\_start)}.
+\begin{itemize}
+\item Point subsampling: \texttt{subsample\_pointcloud}.
+\item Object-point filtering (to reduce table influence): $z$-based mask.
+\item \texttt{paper} variant: full rigid estimate with \texttt{fast\_global\_registration}, then \texttt{se3\_to\_action}.
+\item \texttt{practical} variant: explicit grasp target (via \texttt{\_target\_grasp\_action}) + centroid-based correction.
+\end{itemize}
+
+\section{Step 2 -- One Diffusion Denoising Step}
+\subsection{Principle}
+The standard DDPM reverse step is first applied to obtain $\tilde a_{t-1}$.
+
+\subsection{Implementation}
+In \texttt{\_adpro\_step}:
+\begin{itemize}
+\item Noise prediction: \texttt{eps\_pred = policy.network.forward(obs, a\_t, t)}.
+\item DDPM step: \texttt{a\_tilde = policy.ddpm\_step(...)}.
+\item Deterministic option: \texttt{deterministic\_denoising=True} removes reverse-process stochastic noise for stability.
+\end{itemize}
+
+\section{Step 3 -- Clean Action Estimation (Tweedie-like Formula)}
+\begin{equation}
+\hat a_0 = \frac{a_t - \sqrt{1-\bar\alpha_t}\,\epsilon_\theta(O,a_t,t)}{\sqrt{\bar\alpha_t}}.
+\end{equation}
+Implementation: \texttt{\_predict\_clean\_action}.
+
+\section{Step 4 -- Task-Manifold Guidance}
+\subsection{Paper Version (surface-to-surface)}
+The geometric objective is built on point clouds (Chamfer):
+\begin{equation}
+\mathcal L = d_{\text{Chamfer}}\big(T(\hat a_0)\,O^0,\;O^1\big).
+\end{equation}
+The intermediate action is then corrected in the opposite gradient direction.
+
+Implementation in \texttt{\_apply\_task\_manifold\_guidance}:
+\begin{itemize}
+\item Action $\to$ pose conversion: \texttt{action\_to\_se3}.
+\item Back-transform to local gripper frame, then apply $T(\hat a_0)$ (frame consistency).
+\item Chamfer gradient: \texttt{chamfer\_distance\_grad}.
+\end{itemize}
+
+\subsection{Practical Version (point-to-point)}
+Guidance pushes toward an explicit \texttt{target\_grasp\_action} (target position + quaternion) using a simplified L2 error.
+
+\section{Step 5 -- Spherical Constraint (Eq. 9)}
+The correction is normalized and scaled by the current noise level:
+\begin{equation}
+ a_{t-1} = \tilde a_{t-1} - s\,\sqrt{d}\,\sigma_t\,\frac{\nabla_a\mathcal L}{\|\nabla_a\mathcal L\|},
+\end{equation}
+where $d$ is the action dimension and $s$ is a stabilization factor (in code: \texttt{spherical\_scale}).
+
+Implementation:
+\begin{itemize}
+\item \texttt{use\_spherical=True}: enables the normalized update rule.
+\item \texttt{spherical\_scale}: controls guidance step intensity.
+\end{itemize}
+
+\section{Step 6 -- Full Inference Loop}
+In \texttt{inference(...)}:
+\begin{enumerate}
+\item Choose initialization: task-aware (if \texttt{use\_fgr}) or Gaussian.
+\item Iterate decreasing $t$ from \texttt{t\_start} down to $0$.
+\item At each step: DDPM $\to$ clean estimate $\hat a_0$ $\to$ manifold guidance $\to$ spherical constraint.
+\item Final output: action $a_0$ applied to the environment/controller.
+\end{enumerate}
+
+\section{Main Parameters and Their Role}
+\begin{itemize}
+\item \texttt{implementation}: \texttt{paper} vs \texttt{practical}.
+\item \texttt{M}: initial noise level (smaller means closer-to-final initialization).
+\item \texttt{spherical\_scale}: stability vs aggressiveness of guidance.
+\item \texttt{deterministic\_denoising}: temporal stability in simulation and robot loops.
+\item \texttt{use\_blend} (practical): additional stabilization toward explicit target.
+\end{itemize}
+
+\section{Visualization and Evaluation in This Repository}
+\subsection{Simulation and Offline Evaluation}
+In \texttt{simulate\_realtime.py}, \texttt{--show-denoise} visualizes:
+\begin{itemize}
+\item internal denoising trajectory $a_t\to a_0$ (baseline vs ADPro),
+\item ADPro initialization state,
+\item guidance metrics (gradient norm, step norm, blend).
+\end{itemize}
+
+In \texttt{demo.py}, ADPro is benchmarked against baseline with:
+\begin{itemize}
+\item denoising convergence curves,
+\item action-component/backtracking plots,
+\item 3D executed trajectories,
+\item MSE vs denoising steps,
+\item success-rate vs denoising steps.
+\end{itemize}
+
+\subsection{Real-Robot Layer (Updated)}
+The repository now includes a separated deployment layer under \texttt{real\_robot/}:
+\begin{itemize}
+\item \texttt{control\_loop.py}, \texttt{policy\_engine.py}, \texttt{safety.py}: observation-policy-command loop with safety guards.
+\item Adapters: \texttt{mock\_adapter.py} (local dry-run), \texttt{ros2\_franka\_adapter.py} (ROS2), \texttt{gello\_zmq\_adapter.py} (GELLO/ZMQ stack).
+\item Operational scripts: \texttt{run\_policy.py}, \texttt{calibrate\_workspace\_guided.py}, \texttt{calibrate\_local\_frame\_matrix.py}, and motion-test scripts.
+\item Config files: \texttt{real\_robot/config/lab\_franka.json} and \texttt{lab\_franka.yaml}.
+\end{itemize}
+
+\subsection{Calibration and Deployment Notes}
+Calibration is required to align camera/local coordinates with robot/world coordinates before deploying ADPro on hardware.
+The added scripts support workspace-bound estimation and local-frame matrix calibration to make execution reproducible and safe.
+
+\section{Summary}
+ADPro improves a diffusion policy by injecting geometric structure at test time:
+task-aware initialization, manifold guidance, and spherical-normalized updates.
+The \texttt{paper} variant maximizes theoretical fidelity, while the \texttt{practical} variant maximizes robustness in simulation.
+
+\end{document}

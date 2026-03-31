@@ -26,3 +26,13 @@ ros2_topics:
   ee_pose_topic: /franka_state_controller/ee_pose
   target_pose_topic: /adpro/target_pose
   gripper_width_topic: /adpro/target_gripper_width
+
+gello:
+  # Backend sans ROS2: utilise le serveur ZMQ de experiments/launch_nodes.py
+  host: 127.0.0.1
+  robot_port: 6001
+  # Position objet approx pour générer le point-cloud de scène côté ADPro.
+  obj_pos: [0.55, 0.0, 0.05]
+  table_height: 0.0
+  n_pc_points: 512
+  ik_iters: 24

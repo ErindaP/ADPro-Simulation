@@ -39,7 +39,7 @@ def load_cfg(path: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Run ADPro policy on real robot bridge")
     parser.add_argument("--config", default="real_robot/config/lab_franka.json")
-    parser.add_argument("--backend", choices=["mock", "ros2"], default="mock")
+    parser.add_argument("--backend", choices=["mock", "ros2", "gello"], default="mock")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--run-seconds", type=float, default=None,
                         help="Override loop.run_seconds from config.")
@@ -49,6 +49,18 @@ def main():
     policy_cfg = cfg["policy"]
     loop_cfg = cfg["loop"]
     safety_cfg = cfg["safety"]
+
+    print(f"[run_policy] backend={args.backend} config={args.config}")
+    print(
+        "[run_policy] policy "
+        f"impl={policy_cfg.get('adpro_impl', 'paper')} "
+        f"steps={int(policy_cfg.get('adpro_steps', 20))} "
+        f"M={int(policy_cfg.get('adpro_M', 60))}"
+    )
+    print(
+        "[run_policy] safety workspace "
+        f"min={safety_cfg['workspace_min']} max={safety_cfg['workspace_max']}"
+    )
 
     policy = PolicyEngine(
         checkpoint_path=policy_cfg["checkpoint_path"],
@@ -74,7 +86,7 @@ def main():
     if args.backend == "mock":
         provider = MockObservationProvider(seed=int(policy_cfg.get("seed", 42)))
         commander = MockCommander(provider)
-    else:
+    elif args.backend == "ros2":
         topics_cfg = cfg["ros2_topics"]
         topics = Ros2Topics(
             pc_gripper_topic=topics_cfg["pc_gripper_topic"],
@@ -84,6 +96,26 @@ def main():
             gripper_width_topic=topics_cfg["gripper_width_topic"],
         )
         ros_node, provider, commander = build_ros2_stack(topics)
+    else:
+        from real_robot.adapters.gello_zmq_adapter import GelloZmqConfig, build_gello_stack
+
+        gello_cfg = cfg["gello"]
+        print(
+            "[run_policy] gello "
+            f"host={gello_cfg.get('host', '127.0.0.1')} "
+            f"port={int(gello_cfg.get('robot_port', 6001))} "
+            f"obj_pos={gello_cfg.get('obj_pos', [0.55, 0.0, 0.05])}"
+        )
+        provider, commander = build_gello_stack(
+            GelloZmqConfig(
+                host=str(gello_cfg.get("host", "127.0.0.1")),
+                robot_port=int(gello_cfg.get("robot_port", 6001)),
+                obj_pos=np.array(gello_cfg.get("obj_pos", [0.55, 0.0, 0.05]), dtype=np.float64),
+                table_height=float(gello_cfg.get("table_height", 0.0)),
+                n_pc_points=int(gello_cfg.get("n_pc_points", 512)),
+                ik_iters=int(gello_cfg.get("ik_iters", 24)),
+            )
+        )
 
     try:
         run_seconds = float(loop_cfg.get("run_seconds", -1.0))
